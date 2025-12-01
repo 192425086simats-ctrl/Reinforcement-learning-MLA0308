@@ -1,0 +1,25 @@
+import numpy as np
+gamma = 0.9
+V = np.zeros((3,3))
+reward = -1  
+actions = [(-1,0),(1,0),(0,-1),(0,1)]
+def one_step_value(V):
+    newV = np.zeros_like(V)
+    for i in range(3):
+        for j in range(3):
+            values = []
+            for a in actions:
+                ni, nj = i + a[0], j + a[1]
+                if 0 <= ni < 3 and 0 <= nj < 3:
+                    values.append(reward + gamma * V[ni,nj])
+                else:
+                    values.append(reward + gamma * V[i,j])
+            newV[i,j] = max(values)
+    return newV
+V1 = one_step_value(V)
+V, V1
+
+Output:
+[[0. 0. 0.]
+ [0. 0. 0.]
+ [0. 0. 0.]]
