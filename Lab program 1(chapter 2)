@@ -1,0 +1,57 @@
+import numpy as np
+states = [0, 1]
+actions = [0, 1]
+def transition(state, action):
+    if action == 0:
+        return state
+    return 1 - state
+NS_wait = 3
+EW_wait = 5
+def reward(state):
+    if state == 0:
+        return -EW_wait   # cars waiting East-West
+    else:
+        return -NS_wait   # cars waiting North-South
+gamma = 0.9
+policy = {0:0, 1:0}
+V = {0:0.0, 1:0.0}
+def policy_evaluation(policy, theta=1e-4):
+    while True:
+        delta = 0
+        newV = V.copy()
+        for s in states:
+            a = policy[s]
+            s2 = transition(s, a)
+            r = reward(s2)
+            newV[s] = r + gamma * V[s2]
+            delta = max(delta, abs(newV[s] - V[s]))
+        for s in states:
+            V[s] = newV[s]
+        if delta < theta:
+            break
+def policy_improvement():
+    stable = True
+    for s in states:
+        old_action = policy[s]
+        action_values = {}
+        for a in actions:
+            s2 = transition(s, a)
+            r = reward(s2)
+            action_values[a] = r + gamma * V[s2]
+        best_action = max(action_values, key=action_values.get)
+        policy[s] = best_action
+        if best_action != old_action:
+            stable = False
+    return stable
+while True:
+    policy_evaluation(policy)
+    if policy_improvement():
+        break
+V, policy
+
+Output:
+{0: -29.999576525508417,
+ 1: -29.999576525508417}
+
+
+
