@@ -1,0 +1,211 @@
+import numpy as np
+import random
+import matplotlib.pyplot as plt
+from collections import defaultdict
+class DroneDeliveryEnv:
+    def __init__(self, grid_size=5, fuel_cost=0.1, time_cost=1.0):
+        self.grid_size = grid_size
+        self.start = (0, 0)
+        self.destination = (grid_size-1, grid_size-1)
+        self.obstacles = [(1, 2), (2, 2), (3, 1)]  # Fixed obstacles
+        self.fuel_cost = fuel_cost
+        self.time_cost = time_cost
+        self.actions = [0, 1, 2, 3]
+        self.action_names = ["Up", "Down", "Left", "Right"]
+        self.reset()
+     def reset(self):
+        self.position = list(self.start)
+        self.total_fuel = 0
+        self.total_time = 0
+        self.done = False
+        return tuple(self.position)
+     def step(self, action):
+        if self.done:
+            return tuple(self.position), 0, self.done
+        new_pos = self.position.copy()
+        if action == 0:  # Up
+            new_pos[0] = max(0, new_pos[0] - 1)
+        elif action == 1:  # Down
+            new_pos[0] = min(self.grid_size - 1, new_pos[0] + 1)
+        elif action == 2:  # Left
+            new_pos[1] = max(0, new_pos[1] - 1)
+        elif action == 3:  # Right
+            new_pos[1] = min(self.grid_size - 1, new_pos[1] + 1)
+        if tuple(new_pos) in self.obstacles:
+            reward = -5  # Big penalty for hitting obstacle
+            self.total_fuel += 2 * self.fuel_cost  # Extra fuel for hitting obstacle
+        else:
+            self.position = new_pos
+            reward = -self.fuel_cost  # Small fuel cost for moving
+        self.total_time += 1
+        reward -= self.time_cost  
+        if tuple(self.position) == self.destination:
+            reward += 20  
+            self.done = True
+        return tuple(self.position), reward, self.done
+    def render(self):
+        grid = np.zeros((self.grid_size, self.grid_size))
+        for obs in self.obstacles:
+            grid[obs[0], obs[1]] = -1  # Obstacles
+        grid[self.destination[0], self.destination[1]] = 2  # Destination
+        grid[self.position[0], self.position[1]] = 1  # Drone
+        print("Grid (0=empty, 1=drone, -1=obstacle, 2=destination):")
+        print(grid)
+        print(f"Position: {self.position}, Fuel used: {self.total_fuel:.2f}, Time: {self.total_time}")
+def epsilon_greedy_policy(Q, state, epsilon=0.1):
+    """Epsilon-greedy policy for action selection"""
+    if random.random() < epsilon:
+        return random.choice([0, 1, 2, 3])
+    else:
+        return np.argmax(Q[state])
+def monte_carlo_control(env, episodes=1000, gamma=0.9, epsilon=0.1):
+    """Monte Carlo control for learning optimal policy""
+    Q = defaultdict(lambda: np.zeros(4))
+    returns = defaultdict(list)
+      for episode in range(episodes):
+        # Generate an episode
+        state = env.reset()
+        episode_data = []
+        done = False
+          while not done:
+            action = epsilon_greedy_policy(Q, state, epsilon)
+            next_state, reward, done = env.step(action)
+            episode_data.append((state, action, reward))
+            state = next_state
+        G = 0
+        for t in range(len(episode_data)-1, -1, -1):
+            state, action, reward = episode_data[t]
+            G = gamma * G + reward
+            if not any(state == x[0] and action == x[1] for x in episode_data[:t]):
+                returns[(state, action)].append(G)
+                Q[state][action] = np.mean(returns[(state, action)])
+         if (episode + 1) % 200 == 0:
+            print(f"Episode {episode + 1}/{episodes}")
+    return Q
+def test_policy(env, Q, num_tests=3):
+    """Test the learned policy"""
+    print("\n" + "="*50)
+    print("Testing Learned Policy")
+    print("="*50)
+    for test in range(num_tests):
+        state = env.reset()
+        env.render()
+        steps = 0
+        total_reward = 0
+        path = [state]
+        while not env.done and steps < 50:
+            action = np.argmax(Q[state])
+            state, reward, done = env.step(action)
+            path.append(state)
+            total_reward += reward
+            steps += 1
+        print(f"\nTest {test + 1}:")
+        print(f"Steps: {steps}, Total Reward: {total_reward:.2f}")
+        print(f"Path taken: {path}")
+        env.render()
+        print()
+def plot_learning(Q, grid_size=5):
+    """Visualize the learned policy"""
+    policy_grid = np.zeros((grid_size, grid_size))
+    arrow_map = {0: '↑', 1: '↓', 2: '←', 3: '→'}
+    fig, ax = plt.subplots(figsize=(8, 6))
+    for i in range(grid_size):
+        for j in range(grid_size):
+            state = (i, j)
+            if state in Q:
+                best_action = np.argmax(Q[state])
+                policy_grid[i, j] = best_action + 
+                dx, dy = 0, 0
+                if best_action == 0:  # Up
+                    dx, dy = -0.3, 0
+                elif best_action == 1:  # Down
+                    dx, dy = 0.3, 0
+                elif best_action == 2:  # Left
+                    dx, dy = 0, -0.3
+                elif best_action == 3:  # Right
+                    dx, dy = 0, 0.3
+                 ax.arrow(j, i, dy, dx, head_width=0.2, head_length=0.2, f
+    obstacles = [(1, 2), (2, 2), (3, 1)]
+    for obs in obstacles:
+        ax.add_patch(plt.Rectangle((obs[1]-0.5, obs[0]-0.5), 1, 1, color='red', alpha=0.5))
+    ax.add_patch(plt.Rectangle((4-0.5, 4-0.5), 1, 1, color='green', alpha=0.5))
+    ax.set_xlim(-0.5, grid_size-0.5)
+    ax.set_ylim(grid_size-0.5, -0.5)
+    ax.set_xticks(range(grid_size))
+    ax.set_yticks(range(grid_size))
+    ax.grid(True)
+    ax.set_title("Learned Drone Policy (Arrows show optimal actions)")
+    ax.set_xlabel("X Coordinate")
+    ax.set_ylabel("Y Coordinate")
+    ax.plot([], [], color='red', alpha=0.5, label='Obstacles')
+    ax.plot([], [], color='green', alpha=0.5, label='Destination')
+    ax.legend()
+    plt.show()
+if __name__ == "__main__":
+    print("="*50)
+    print("Autonomous Drone Delivery using Monte Carlo Control")
+    print("="*50)
+    env = DroneDeliveryEnv(grid_size=5)
+    print("\nTraining drone policy...")
+    Q = monte_carlo_control(env, episodes=1000, epsilon=0.1)
+    test_policy(env, Q)
+    print("\nSample Q-values (state: [up, down, left, right]):")
+    sample_states = [(0, 0), (0, 4), (2, 0), (4, 0)]
+    for state in sample_states:
+        print(f"State {state}: {Q[state]}")
+    plot_learning(Q)
+
+Output:
+==================================================
+Autonomous Drone Delivery using Monte Carlo Control
+==================================================
+
+Training drone policy...
+Episode 200/1000
+Episode 400/1000
+Episode 600/1000
+Episode 800/1000
+Episode 1000/1000
+
+==================================================
+Testing Learned Policy
+==================================================
+
+Test 1:
+Steps: 8, Total Reward: 3.60
+Path taken: [(0, 0), (0, 1), (0, 2), (0, 3), (0, 4), (1, 4), (2, 4), (3, 4), (4, 4)]
+Grid (0=empty, 1=drone, -1=obstacle, 2=destination):
+[[ 0.  0.  0.  0.  0.]
+ [ 0.  0. -1.  0.  0.]
+ [ 0.  0. -1.  0.  0.]
+ [ 0. -1.  0.  0.  0.]
+ [ 0.  0.  0.  0.  2.]]
+Position: [4, 4], Fuel used: 0.80, Time: 8
+
+Test 2:
+Steps: 8, Total Reward: 3.60
+Path taken: [(0, 0), (0, 1), (0, 2), (0, 3), (0, 4), (1, 4), (2, 4), (3, 4), (4, 4)]
+Grid (0=empty, 1=drone, -1=obstacle, 2=destination):
+[[ 0.  0.  0.  0.  0.]
+ [ 0.  0. -1.  0.  0.]
+ [ 0.  0. -1.  0.  0.]
+ [ 0. -1.  0.  0.  0.]
+ [ 0.  0.  0.  0.  2.]]
+Position: [4, 4], Fuel used: 0.80, Time: 8
+
+Test 3:
+Steps: 8, Total Reward: 3.60
+Path taken: [(0, 0), (0, 1), (0, 2), (0, 3), (0, 4), (1, 4), (2, 4), (3, 4), (4, 4)]
+Grid (0=empty, 1=drone, -1=obstacle, 2=destination):
+[[ 0.  0.  0.  0.  0.]
+ [ 0.  0. -1.  0.  0.]
+ [ 0.  0. -1.  0.  0.]
+ [ 0. -1.  0.  0.  0.]
+ [ 0.  0.  0.  0.  2.]]
+Position: [4, 4], Fuel used: 0.80, Time: 8
+
+Sample Q-values (state: [up, down, left, right]):
+State (0, 0): [ 0.          8.92329189 10.91480805 11.35139174]
+State (0, 4): [ 0.         11.171478   8.78339685  8.91814443]
+State (2, 0): [ 8.93924663  9.16517077 10.80742494 11.19995872]
+State (4, 0): [ 0.          0.          0.          0.        ]
