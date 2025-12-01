@@ -1,0 +1,56 @@
+import numpy as np
+grid = np.array([
+    [0, 1, 0],
+    [0, 2, 0],
+    [0, 0, 3]
+])
+gamma = 0.9  # discount factor
+V = np.zeros((3, 3))  # value function
+policy = {(i, j): "R" for i in range(3) for j in range(3)}
+moves = {
+    "U": (-1, 0),
+    "D": (1, 0),
+    "L": (0, -1),
+    "R": (0, 1)
+}
+def get_reward(i, j):
+    cell = grid[i][j]
+    if cell == 1: return 2       
+    if cell == 2: return -2     
+    if cell == 3: return 5      
+    return -1                    
+def next_state(i, j, action):
+    di, dj = moves[action]
+    ni, nj = i + di, j + dj
+    if 0 <= ni < 3 and 0 <= nj < 3:
+        return ni, nj
+    return i, j   # out of bounds → stay
+def policy_evaluation():
+    global V
+    while True:
+        delta = 0
+        newV = V.copy()
+        for i in range(3):
+            for j in range(3):
+                a = policy[(i, j)]
+                ni, nj = next_state(i, j, a)
+                r = get_reward(ni, nj)
+                newV[i][j] = r + gamma * V[ni][nj]
+                delta = max(delta, abs(newV[i][j] - V[i][j]))
+        V = newV
+        if delta < 1e-4:
+            break
+    return V
+values = policy_evaluation()
+print(values) 
+
+Output:
+[[ -6.99982573  -9.99982573  -9.99982573]
+ [-10.99982573  -9.99982573  -9.99982573]
+ [ 43.99912865  49.99912865  49.99912865]]
+
+
+
+
+
+
