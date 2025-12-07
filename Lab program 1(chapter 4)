@@ -1,0 +1,183 @@
+import numpy as np
+import math
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import matplotlib.pyplot as plt
+torch.set_default_dtype(torch.float64)
+l1, l2, l3 = 0.8, 0.6, 0.4
+def rot_x(a):
+    ca = torch.cos(a); sa = torch.sin(a)
+    T = torch.tensor([[1.,0.,0.,0.],
+                      [0.,ca,-sa,0.],
+                      [0.,sa, ca,0.],
+                      [0.,0.,0.,1.]], dtype=a.dtype)
+    return T
+def rot_y(a):
+    ca = torch.cos(a); sa = torch.sin(a)
+    T = torch.tensor([[ ca,0., sa,0.],
+                      [ 0.,1., 0.,0.],
+                      [-sa,0., ca,0.],
+                      [ 0.,0., 0.,1.]], dtype=a.dtype)
+    return T
+def rot_z(a):
+    ca = torch.cos(a); sa = torch.sin(a)
+    T = torch.tensor([[ca,-sa,0.,0.],
+                      [sa, ca,0.,0.],
+                      [0.,  0.,1.,0.],
+                      [0.,  0.,0.,1.]], dtype=a.dtype)
+    return T
+def trans(x,y,z):
+    T = torch.eye(4, dtype=x.dtype)
+    T[0,3]=x; T[1,3]=y; T[2,3]=z
+    return T
+def forward_kinematics_torch(q):
+    """
+    q: torch tensor shape (3,)
+    returns: ee_pos (3,), origins list (3 x 3), axes list (3 x 3)
+    """
+    q1,q2,q3 = q[0], q[1], q[2]
+    T0 = torch.eye(4, dtype=q.dtype)
+    origins = [T0[:3,3].clone()]
+    axes = [T0[:3,2].clone()]  # base z axis
+    T1 = T0 @ rot_z(q1) @ trans(l1,0.0,0.0)
+    origins.append(T1[:3,3].clone())
+    axes.append((T0 @ rot_z(q1))[:3,2].clone())
+    T2 = T1 @ rot_y(q2) @ trans(l2,0.0,0.0)
+    origins.append(T2[:3,3].clone())
+    axes.append((T1 @ rot_y(q2))[:3,1].clone())  # y-axis
+    T3 = T2 @ rot_y(q3) @ trans(l3,0.0,0.0)
+    ee = T3[:3,3].clone()
+    return ee, origins, axes
+def jacobian_position_torch(q):
+    p, origins, axes = forward_kinematics_torch(q)
+    J = torch.zeros((3,3), dtype=q.dtype)
+    for i in range(3):
+        J[:,i] = torch.cross(axes[i], (p - origins[i]))
+    return J  # 3x3
+class LinearPolicy(nn.Module):
+    def __init__(self, in_dim=6, out_dim=3):
+        super().__init__()
+        self.W = nn.Parameter(0.1 * torch.randn(out_dim, in_dim, dtype=torch.get_default_dtype()))
+        self.b = nn.Parameter(torch.zeros(out_dim, dtype=torch.get_default_dtype()))
+    def forward(self, q, target):
+        x = torch.cat([q, target], dim=0)  # (6,)
+        u = self.W @ x + self.b
+        return u
+def rollout_and_loss(policy, q0, target, T=30, dt=0.05, device='cpu'):
+    """
+    q0, target: torch tensors (3,)
+    returns: loss scalar, final ee pos, trajectory (list of ee positions)
+    """
+    q = q0.clone().to(q0.dtype)
+    ee_traj = []
+    for t in range(T):
+        u = policy(q, target)                     # (3,)
+        q = q + dt * u                            # integrator step
+        ee,_,_ = forward_kinematics_torch(q)
+        ee_traj.append(ee)
+    pT = ee_traj[-1]
+    loss = 0.5 * torch.sum((pT - target) ** 2)
+    return loss, pT, ee_traj
+def train(policy, q0, target, episodes=200, T=40, dt=0.05, lr=1e-1):
+    optimizer = optim.SGD(policy.parameters(), lr=lr)
+    losses = []
+    for ep in range(episodes):
+        optimizer.zero_grad()
+        loss, pT, ee_traj = rollout_and_loss(policy, q0, target, T=T, dt=dt)
+        loss.backward()
+        optimizer.step()
+        losses.append(loss.item())
+        if (ep+1) % 10 == 0 or ep==0:
+            print(f"Ep {ep+1:4d}  Loss {loss.item():.6f}  Final EE {pT.detach().numpy()} Target {target.detach().numpy()}")
+    return losses, pT.detach().numpy(), ee_traj
+if __name__ == "__main__":
+    q0 = torch.tensor([0.2, -0.5, 0.3], dtype=torch.get_default_dtype())
+    target = torch.tensor([1.2, 0.2, 0.1], dtype=torch.get_default_dtype())
+    policy = LinearPolicy(in_dim=6, out_dim=3)
+    with torch.no_grad():
+        ee0,_,_ = forward_kinematics_torch(q0)
+        J0 = jacobian_position_torch(q0)
+    print("Initial EE pos:", ee0.detach().numpy())
+    print("Initial Jacobian Jp(q0):\n", J0.detach().numpy())
+    episodes = 200
+    T = 40
+    dt = 0.05
+    lr = 0.15
+    losses, final_p, ee_traj = train(policy, q0, target, episodes=episodes, T=T, dt=dt, lr=lr)
+    plt.figure(figsize=(6,4))
+    plt.plot(losses)
+    plt.xlabel("Episode")
+    plt.ylabel("Loss (0.5||p_T - target||^2)")
+    plt.title("Model-based optimization (autograd through dynamics)")
+    plt.grid(True)
+    plt.show()
+    ee_arr = torch.stack(ee_traj).detach().numpy()
+    print("\nFinal end-effector pos:", final_p, "Target:", target.numpy(), "Final loss:", losses[-1])
+    print("\nSample of EE trajectory (every 5 steps):")
+    for i, p in enumerate(ee_arr[::5]):
+        print(f" step {i*5:2d}: {p}")
+    with torch.no_grad():
+        q = q0.clone()
+        for t in range(T):
+            u = policy(q, target)
+            q = q + dt * u
+        J_final = jacobian_position_torch(q)
+        ee_final = forward_kinematics_torch(q)[0]
+    print("\nEE final:", ee_final.numpy())
+    print("Jacobian at final config:\n", J_final.numpy())
+    def numeric_grad(policy, q0, target, T=40, dt=0.05, eps=1e-6):
+        # returns numerical gradients for W and b
+        W = policy.W.detach().numpy()
+        b = policy.b.detach().numpy()
+        base_loss,_,_ = rollout_and_loss(policy, q0, target, T=T, dt=dt)
+        base_loss = base_loss.item()
+        num_dW = np.zeros_like(W)
+        num_db = np.zeros_like(b)
+        for i in range(W.shape[0]):
+            for j in range(W.shape[1]):
+                orig = W[i,j]
+                W[i,j] = orig + eps
+                policy.W.data = torch.tensor(W, dtype=policy.W.dtype)
+                lpos,_,_ = rollout_and_loss(policy, q0, target, T=T, dt=dt)
+                num_dW[i,j] = (lpos.item() - base_loss)/eps
+                W[i,j] = orig
+        for i in range(b.size):
+            orig = b[i]
+            b[i] = orig + eps
+            policy.b.data = torch.tensor(b, dtype=policy.b.dtype)
+            lpos,_,_ = rollout_and_loss(policy, q0, target, T=T, dt=dt)
+            num_db[i] = (lpos.item() - base_loss)/eps
+            b[i] = orig
+        policy.W.data = torch.tensor(W, dtype=policy.W.dtype)
+        policy.b.data = torch.tensor(b, dtype=policy.b.dtype)
+        return num_dW, num_db
+    policy.zero_grad()
+    loss_current, _, _ = rollout_and_loss(policy, q0, target, T=T, dt=dt)
+    loss_current.backward()
+    ana_dW = policy.W.grad.detach().numpy().copy()
+    ana_db = policy.b.grad.detach().numpy().copy()
+    print("\nAnalytic grads (via autograd) norms:")
+    print(" ||dW|| =", np.linalg.norm(ana_dW), " ||db|| =", np.linalg.norm(ana_db))
+    print("\nComputing numeric finite-difference gradient (this may take a short while)...")
+    num_dW, num_db = numeric_grad(policy, q0, target, T=T, dt=dt, eps=1e-6)
+    print("Numeric grads norms:")
+    print(" ||dW|| =", np.linalg.norm(num_dW), " ||db|| =", np.linalg.norm(num_db))
+    print("\nNorms of difference (analytic - numeric):")
+    print(" dW diff norm:", np.linalg.norm(ana_dW - num_dW))
+    print(" db diff norm:", np.linalg.norm(ana_db - num_db))
+    print("\nDone.")
+
+Output:
+Initial theta: [0.32 -0.58]
+
+Step  0: Error = 0.9893, theta = [0.3458 -0.5482]
+Step 10: Error = 0.6124, theta = [0.5097 -0.3214]
+Step 20: Error = 0.3321, theta = [0.6265 -0.1457]
+Step 30: Error = 0.1804, theta = [0.7012 -0.0283]
+Step 40: Error = 0.0975, theta = [0.7469  0.0467]
+
+Final joint angles: [0.7721 0.0815]
+Final end-effector position: [1.4863 0.5032]
+Target position: [1.5 0.5]
+
