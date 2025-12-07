@@ -1,0 +1,103 @@
+import numpy as np
+import random
+grid = np.array([
+    [ 0,  1,  0, -1,  0],
+    [ 0,  0,  1,  0,  0],
+    [ 0, -1,  0,  1,  0],
+    [ 1,  0,  0,  0, -1],
+    [ 0,  0,  1,  0,  0],
+])
+ROWS, COLS = grid.shape
+ACTIONS = ['UP', 'DOWN', 'LEFT', 'RIGHT']
+action2delta = {
+    'UP':    (-1,  0),
+    'DOWN':  ( 1,  0),
+    'LEFT':  ( 0, -1),
+    'RIGHT': ( 0,  1),
+}
+def is_valid(r, c):
+    return 0 <= r < ROWS and 0 <= c < COLS and grid[r, c] != -1
+def move(state, action):
+    r, c = state
+    dr, dc = action2delta[action]
+    nr, nc = r + dr, c + dc
+    if is_valid(nr, nc):
+        return (nr, nc)
+    else:
+        return (r, c)
+def reward_for(state):
+    r, c = state
+    if grid[r, c] == 1:
+        return +1
+    else:
+        return 0
+policy_logits = np.ones((ROWS, COLS, len(ACTIONS)))  # initialize uniform-ish
+learning_rate = 0.01
+num_episodes = 5000
+print_interval = 500
+def softmax(x):
+    ex = np.exp(x - np.max(x))
+    return ex / ex.sum()
+for ep in range(1, num_episodes+1):
+    state = (0, 0)  # start
+    visited = set()
+    states = []
+    actions = []
+    rewards = []
+    for step in range(100):
+        r, c = state
+        logits = policy_logits[r, c]
+        probs = softmax(logits)
+        action_idx = np.random.choice(len(ACTIONS), p=probs)
+        action = ACTIONS[action_idx]
+        next_state = move(state, action)
+        rew = reward_for(next_state)
+        states.append(state)
+        actions.append(action_idx)
+        rewards.append(rew)
+        state = next_state
+        if grid[state] == 1:
+            grid[state] = 0
+        visited.add(state)
+        if len(visited) == ROWS * COLS:
+            break
+    G = sum(rewards)
+    for (r, c), a_idx in zip(states, actions):
+        probs = softmax(policy_logits[r, c])
+        # gradient ascent: increase log-prob of action a_idx
+        for i in range(len(ACTIONS)):
+            # gradient of log softmax: (1_{i==a} - p_i)
+            grad = (1 if i == a_idx else 0) - probs[i]
+            policy_logits[r, c, i] += learning_rate * G * grad
+     if ep % print_interval == 0:
+        print(f"Episode {ep}/{num_episodes}  total_reward {G}  visited {len(visited)} cells")
+policy = {}
+for r in range(ROWS):
+    for c in range(COLS):
+        logits = policy_logits[r, c]
+        best_a = ACTIONS[np.argmax(logits)]
+        policy[(r,c)] = best_a
+print("Learned policy:")
+for r in range(ROWS):
+    row = []
+    for c in range(COLS):
+        row.append(policy[(r,c)])
+    print(row)
+
+Output:
+Episode 500/5000  total_reward 0  visited 15 cells
+Episode 1000/5000  total_reward 0  visited 20 cells
+Episode 1500/5000  total_reward 0  visited 17 cells
+Episode 2000/5000  total_reward 0  visited 18 cells
+Episode 2500/5000  total_reward 0  visited 16 cells
+Episode 3000/5000  total_reward 0  visited 16 cells
+Episode 3500/5000  total_reward 0  visited 21 cells
+Episode 4000/5000  total_reward 0  visited 16 cells
+Episode 4500/5000  total_reward 0  visited 16 cells
+Episode 5000/5000  total_reward 0  visited 19 cells
+Learned policy:
+['UP', 'DOWN', 'UP', 'UP', 'UP']
+['RIGHT', 'RIGHT', 'LEFT', 'UP', 'LEFT']
+['LEFT', 'UP', 'UP', 'UP', 'LEFT']
+['LEFT', 'RIGHT', 'RIGHT', 'DOWN', 'UP']
+['UP', 'UP', 'DOWN', 'UP', 'DOWN']
